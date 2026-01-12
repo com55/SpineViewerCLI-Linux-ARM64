@@ -41,7 +41,7 @@ jobs:
       - name: Build and Publish for ARM64
         if: steps.check_rel.outputs.exists == 'false'
         run: |
-          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true -o dist/arm64
+          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true /p:PlatformTarget=AnyCpu -o dist/arm64
           cd dist/arm64 && zip -r ../../SpineViewerCLI-Linux-ARM64.zip *
 
       - name: Create/Update Release
