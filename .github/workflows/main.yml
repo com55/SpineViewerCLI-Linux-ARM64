@@ -1,0 +1,56 @@
+name: Auto Build ARM64 for SpineViewer
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Latest Tag from Upstream
+        id: upstream
+        run: |
+          UPSTREAM_TAG=$(curl -s https://api.github.com/repos/ww-rm/SpineViewer/releases/latest | jq -r .tag_name)
+          echo "tag=$UPSTREAM_TAG" >> $GITHUB_OUTPUT
+
+      - name: Check if Release Already Exists
+        id: check_rel
+        run: |
+          MY_REL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.upstream.outputs.tag }} | jq -r .tag_name)
+          if [ "$MY_REL" == "${{ steps.upstream.outputs.tag }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout Upstream Code
+        if: steps.check_rel.outputs.exists == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: ww-rm/SpineViewer
+          ref: ${{ steps.upstream.outputs.tag }}
+
+      - name: Setup .NET
+        if: steps.check_rel.outputs.exists == 'false'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build and Publish for ARM64
+        if: steps.check_rel.outputs.exists == 'false'
+        run: |
+          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true -o dist/arm64
+          cd dist/arm64 && zip -r ../../SpineViewerCLI-Linux-ARM64.zip *
+
+      - name: Create/Update Release
+        if: steps.check_rel.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.upstream.outputs.tag }}
+          name: Release ${{ steps.upstream.outputs.tag }}
+          body: "Weekly Auto-built ARM64 binary"
+          files: SpineViewerCLI-Linux-ARM64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
