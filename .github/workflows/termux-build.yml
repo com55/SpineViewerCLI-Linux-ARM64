@@ -1,4 +1,4 @@
-name: Auto Build Termux
+name: Auto Build Termux for SpineViewer
 
 on:
   schedule:
@@ -24,15 +24,32 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Build in ARM64 Container
+      - name: Build in ARM64 Container (.NET 9)
         run: |
           mkdir -p dist/termux
           
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            mcr.microsoft.com/dotnet/sdk:8.0 \
-            bash -c "dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-bionic-arm64 -p:SelfContained=true -p:PublishSingleFile=false -p:PublishTrimmed=false -p:RuntimeIdentifier=linux-bionic-arm64 -p:PlatformTarget=arm64 -o dist/termux && chmod -R 777 dist/termux"
+            mcr.microsoft.com/dotnet/sdk:9.0 \
+            bash -c "
+              sed -i 's/net8.0/net9.0/g' SpineViewerCLI/SpineViewerCLI.csproj
+              
+              dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
+                -c Release \
+                -r linux-arm64 \
+                --self-contained false \
+                -p:PublishSingleFile=false \
+                -p:PublishTrimmed=false \
+                -o dist/termux
+              
+              echo '#!/bin/bash' > dist/termux/run.sh
+              echo 'export LD_PRELOAD=\"\"' >> dist/termux/run.sh
+              echo 'dotnet SpineViewerCLI.dll \"\$@\"' >> dist/termux/run.sh
+              chmod +x dist/termux/run.sh
+              
+              chmod -R 777 dist/termux
+            "
 
       - name: Package Release
         run: |
