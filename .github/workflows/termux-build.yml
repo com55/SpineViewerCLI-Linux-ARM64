@@ -1,4 +1,4 @@
-name: Auto Build Termux (Docker Native)
+name: Auto Build Termux
 
 on:
   schedule:
@@ -24,40 +24,19 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Build in Termux Container
+      - name: Build in ARM64 Container
         run: |
           mkdir -p dist/termux
           
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            termux/termux-docker:latest \
-            bash -c "
-              echo 'Setting up Termux Environment...'
-              pkg update -y && pkg install -y wget tar openssl libicu krb5 zlib
-              
-              wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
-              chmod +x dotnet-install.sh
-              ./dotnet-install.sh --channel 8.0 --install-dir /root/.dotnet
-              export PATH=\$PATH:/root/.dotnet
-              
-              echo 'Building Project...'
-              dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
-                -c Release \
-                -r linux-arm64 \
-                --self-contained true \
-                -p:PublishSingleFile=true \
-                -p:EnableCompressionInSingleFile=false \
-                -p:IncludeNativeLibrariesForSelfExtract=true \
-                -o /workspace/dist/termux
- 
-              chmod -R 777 /workspace/dist/termux
-            "
+            mcr.microsoft.com/dotnet/sdk:8.0 \
+            bash -c "dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-bionic-arm64 -p:SelfContained=true -p:PublishSingleFile=false -p:PublishTrimmed=false -p:RuntimeIdentifier=linux-bionic-arm64 -p:PlatformTarget=arm64 -o dist/termux && chmod -R 777 dist/termux"
 
       - name: Package Release
         run: |
           cd dist/termux
-          ls -lh
           zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
 
       - name: Upload to Release
