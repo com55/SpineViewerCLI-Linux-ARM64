@@ -40,6 +40,7 @@ jobs:
                 -r linux-arm64 \
                 --self-contained false \
                 -p:PublishSingleFile=false \
+                -p:PlatformTarget=arm64 \
                 -p:PublishTrimmed=false \
                 -o dist/termux
               
