@@ -30,9 +30,14 @@ jobs:
         run: |
           echo "Starting Build Process..."
           
+          # สั่ง Restore ของมากองไว้ก่อนเพื่อความชัวร์
+          dotnet restore SpineViewerCLI/SpineViewerCLI.csproj -r linux-bionic-arm64 -p:PlatformTarget=arm64
+          
+          # สั่ง Build แบบแยกไฟล์ (Multi-file) เพื่อแก้ปัญหาหาไฟล์ไม่เจอ
           dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
             -c Release \
             -r linux-bionic-arm64 \
+            --no-restore \
             -p:SelfContained=true \
             -p:PublishSingleFile=false \
             -p:PublishTrimmed=false \
@@ -43,6 +48,7 @@ jobs:
           echo "Build finished. Listing files..."
           ls -lh dist/termux/
           
+          # Zip ไฟล์ทั้งหมดโดยใช้ชื่อเดิมที่คุณต้องการ
           cd dist/termux 
           zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
 
