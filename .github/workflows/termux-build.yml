@@ -1,4 +1,4 @@
-name: Auto Build Termux (Bionic) for SpineViewer
+name: Auto Build Termux (Docker Native)
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-termux:
+  build-termux-docker:
     runs-on: ubuntu-latest
     steps:
       - name: Get Latest Tag from Upstream
@@ -21,35 +21,43 @@ jobs:
           repository: ww-rm/SpineViewer
           ref: ${{ steps.upstream.outputs.tag }}
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - name: Build for Termux (Bionic)
+      - name: Build in Termux Container
         run: |
-          echo "Starting Build Process..."
+          mkdir -p dist/termux
           
-          # สั่ง Restore ของมากองไว้ก่อนเพื่อความชัวร์
-          dotnet restore SpineViewerCLI/SpineViewerCLI.csproj -r linux-bionic-arm64 -p:PlatformTarget=arm64
-          
-          # สั่ง Build แบบแยกไฟล์ (Multi-file) เพื่อแก้ปัญหาหาไฟล์ไม่เจอ
-          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
-            -c Release \
-            -r linux-bionic-arm64 \
-            --no-restore \
-            -p:SelfContained=true \
-            -p:PublishSingleFile=false \
-            -p:PublishTrimmed=false \
-            -p:RuntimeIdentifier=linux-bionic-arm64 \
-            -p:PlatformTarget=arm64 \
-            -o dist/termux
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            termux/termux-docker:latest \
+            bash -c "
+              echo 'Setting up Termux Environment...'
+              pkg update -y && pkg install -y wget tar openssl libicu krb5 zlib
+              
+              wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+              chmod +x dotnet-install.sh
+              ./dotnet-install.sh --channel 8.0 --install-dir /root/.dotnet
+              export PATH=\$PATH:/root/.dotnet
+              
+              echo 'Building Project...'
+              dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
+                -c Release \
+                -r linux-arm64 \
+                --self-contained true \
+                -p:PublishSingleFile=true \
+                -p:EnableCompressionInSingleFile=false \
+                -p:IncludeNativeLibrariesForSelfExtract=true \
+                -o /workspace/dist/termux
+ 
+              chmod -R 777 /workspace/dist/termux
+            "
 
-          echo "Build finished. Listing files..."
-          ls -lh dist/termux/
-          
-          # Zip ไฟล์ทั้งหมดโดยใช้ชื่อเดิมที่คุณต้องการ
-          cd dist/termux 
+      - name: Package Release
+        run: |
+          cd dist/termux
+          ls -lh
           zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
 
       - name: Upload to Release
