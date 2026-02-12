@@ -31,16 +31,14 @@ jobs:
           dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
             -c Release \
             -r linux-bionic-arm64 \
-            -o dist/termux \
-            /p:SelfContained=true \
+            --self-contained true \
             /p:PublishSingleFile=true \
+            /p:PlatformTarget=arm64 \
             /p:IncludeNativeLibrariesForSelfExtract=true \
-            /p:DebugType=None \
-            /p:DebugSymbols=false
-          
-          cd dist/termux 
-          mv SpineViewerCLI SpineViewerCLI-Termux
-          zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
+            -o dist/termux
+
+          cd dist/termux && zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
+
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
