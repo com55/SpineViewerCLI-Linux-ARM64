@@ -30,20 +30,17 @@ jobs:
         run: |
           echo "Starting Build Process..."
           
-          dotnet restore SpineViewerCLI/SpineViewerCLI.csproj -r linux-bionic-arm64 -p:PlatformTarget=arm64
-          
           dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
             -c Release \
             -r linux-bionic-arm64 \
-            --no-restore \
             -p:SelfContained=true \
-            -p:PublishSingleFile=true \
-            -p:EnableCompressionInSingleFile=false \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:PublishSingleFile=false \
+            -p:PublishTrimmed=false \
+            -p:RuntimeIdentifier=linux-bionic-arm64 \
             -p:PlatformTarget=arm64 \
             -o dist/termux
 
-          echo "Build finished. Checking file size..."
+          echo "Build finished. Listing files..."
           ls -lh dist/termux/
           
           cd dist/termux 
