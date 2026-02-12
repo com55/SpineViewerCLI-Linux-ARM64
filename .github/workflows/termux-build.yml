@@ -1,0 +1,42 @@
+name: Auto Build Termux (Bionic) for SpineViewer
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  build-termux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Latest Tag from Upstream
+        id: upstream
+        run: |
+          UPSTREAM_TAG=$(curl -s https://api.github.com/repos/ww-rm/SpineViewer/releases/latest | jq -r .tag_name)
+          echo "tag=$UPSTREAM_TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout Upstream Code
+        uses: actions/checkout@v4
+        with:
+          repository: ww-rm/SpineViewer
+          ref: ${{ steps.upstream.outputs.tag }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build for Termux (Bionic)
+        run: |
+          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-bionic-arm64 --self-contained true /p:PublishSingleFile=true /p:PlatformTarget=ARM64 -o dist/termux
+          
+          cd dist/termux && zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.upstream.outputs.tag }}
+          name: Release ${{ steps.upstream.outputs.tag }} 
+          files: SpineViewerCLI-Termux-ARM64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
