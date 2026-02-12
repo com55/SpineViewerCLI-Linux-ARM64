@@ -24,24 +24,21 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 8.0.x
 
       - name: Build for Termux (Bionic)
         run: |
-          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
-            -c Release \
-            -r linux-bionic-arm64 \
-            --self-contained true \
-            /p:PublishSingleFile=true \
-            /p:EnableCompressionInSingleFile=false \
-            /p:IncludeNativeLibrariesForSelfExtract=true \
-            /p:PlatformTarget=arm64 \
-            /p:DebugType=None \
-            /p:DebugSymbols=false \
-            -o dist/termux
+          echo "Starting Build Process..."
+          
+          dotnet restore SpineViewerCLI/SpineViewerCLI.csproj -r linux-bionic-arm64
+          
+          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-bionic-arm64 --no-restore -p:SelfContained=true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=false -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -o dist/termux
+
+          echo "Build finished. Checking file size..."
+          ls -lh dist/termux/
           
           cd dist/termux 
-          mv SpineViewerCLI SpineViewerCLI-Termux
+          mv SpineViewerCLI
           zip -r ../../SpineViewerCLI-Termux-ARM64.zip *
 
       - name: Upload to Release
