@@ -63,11 +63,24 @@ jobs:
           repository: ww-rm/SpineViewer
           ref: ${{ steps.upstream.outputs.tag }}
 
+      - name: Set up Docker Buildx
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: Set up QEMU
         if: steps.should_build.outputs.build == 'true'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
+      - name: Cache Docker layers
+        if: steps.should_build.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-arm64-${{ hashFiles('**/SpineViewerCLI.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-arm64-
 
       - name: Build in Docker with Dependencies
         if: steps.should_build.outputs.build == 'true'
@@ -85,7 +98,7 @@ jobs:
           WORKDIR /build
           COPY . .
           
-          # Don't patch - use regular SkiaSharp
+          # Build without patching SkiaSharp reference
           RUN dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
               -c Release \
               -r linux-arm64 \
@@ -95,38 +108,67 @@ jobs:
               /p:PlatformTarget=ARM64 \
               -o /output
           
-          # Bundle libuuid with the app
-          RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
-              cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
-              find /usr/lib -name "libuuid.so.1*" -exec cp {} /output/ \; || \
-              find /lib -name "libuuid.so.1*" -exec cp {} /output/ \; || \
-              echo "Warning: libuuid not found"
+          # Copy libuuid to multiple locations for maximum compatibility
+          RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
+              cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
+              find /usr/lib -name "libuuid.so.1*" -exec cp {} /output/ \; 2>/dev/null || \
+              find /lib -name "libuuid.so.1*" -exec cp {} /output/ \; 2>/dev/null
           
-          # Create symlink if needed
+          # Create symlinks for libuuid
           RUN cd /output && \
-              if [ -f libuuid.so.1.* ] && [ ! -f libuuid.so.1 ]; then \
-                ln -s libuuid.so.1.* libuuid.so.1; \
-              fi
+              for f in libuuid.so.1.*; do \
+                if [ -f "$f" ]; then \
+                  ln -sf "$f" libuuid.so.1 2>/dev/null || true; \
+                  ln -sf "$f" libuuid.so 2>/dev/null || true; \
+                  break; \
+                fi; \
+              done
           
-          # Patch RPATH for all .so files to look in current directory
-          RUN find /output -name "*.so*" -type f -exec patchelf --set-rpath '$ORIGIN' {} \; 2>/dev/null || true
+          # AGGRESSIVE RPATH PATCHING - patch every single .so file
+          RUN echo "=== Patching all libraries ===" && \
+              find /output -type f \( -name "*.so" -o -name "*.so.*" \) -exec sh -c '\
+                echo "Processing: {}"; \
+                patchelf --set-rpath "\$ORIGIN:\$ORIGIN/lib" "{}" 2>/dev/null || true; \
+                patchelf --print-rpath "{}" 2>/dev/null || echo "  No RPATH set"; \
+              ' \;
           
-          # Patch the main executable to look in current directory for libraries
-          RUN patchelf --set-rpath '$ORIGIN' /output/SpineViewerCLI 2>/dev/null || true
+          # Patch the main executable with multiple fallback paths
+          RUN echo "=== Patching main executable ===" && \
+              patchelf --set-rpath '$ORIGIN:$ORIGIN/lib:/lib:/usr/lib' /output/SpineViewerCLI 2>/dev/null || true && \
+              patchelf --print-rpath /output/SpineViewerCLI 2>/dev/null || echo "No RPATH for executable"
           
-          # Verify RPATH is set correctly
-          RUN echo "=== Checking RPATH ===" && \
-              patchelf --print-rpath /output/SpineViewerCLI || echo "No RPATH for SpineViewerCLI" && \
-              (patchelf --print-rpath /output/libSkiaSharp.so || echo "No RPATH for SkiaSharp") && \
-              echo "=== Checking libuuid ===" && \
-              ls -la /output/libuuid* || echo "No libuuid found"
+          # VERIFICATION - check everything is correct
+          RUN echo "=== VERIFICATION START ===" && \
+              echo "--- Files in output ---" && \
+              ls -lh /output/ | head -20 && \
+              echo "--- libuuid files ---" && \
+              ls -la /output/libuuid* && \
+              echo "--- libSkiaSharp.so RPATH ---" && \
+              (patchelf --print-rpath /output/libSkiaSharp.so || echo "NO RPATH") && \
+              echo "--- libSkiaSharp.so dependencies ---" && \
+              (ldd /output/libSkiaSharp.so 2>/dev/null | grep -E "uuid|not found" || echo "ldd not available") && \
+              echo "--- SpineViewerCLI RPATH ---" && \
+              (patchelf --print-rpath /output/SpineViewerCLI || echo "NO RPATH") && \
+              echo "=== VERIFICATION END ==="
           
           WORKDIR /output
           RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
           EOF
           
-          docker buildx build --platform linux/arm64 -f Dockerfile.arm64 -t spineviewer-arm64 --load .
+          docker buildx build \
+            --platform linux/arm64 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            -f Dockerfile.arm64 \
+            -t spineviewer-arm64 \
+            --load \
+            .
+          
           docker run --rm -v $(pwd):/out spineviewer-arm64 cp /SpineViewerCLI-Linux-ARM64.zip /out/
+          
+          # Move cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Upload to Existing Release
         if: steps.should_build.outputs.build == 'true' && steps.check_rel.outputs.exists == 'true'
@@ -148,8 +190,8 @@ jobs:
             Release ${{ steps.upstream.outputs.tag }}
             **Usage:**
             ```bash
-                        unzip SpineViewerCLI-Linux-ARM64.zip
-                        ./SpineViewerCLI [arguments]
+              unzip SpineViewerCLI-Linux-ARM64.zip
+              ./SpineViewerCLI [arguments]
             ```
           files: SpineViewerCLI-Linux-ARM64.zip
         env:
