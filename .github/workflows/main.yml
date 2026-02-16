@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force rebuild even if release exists'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   check-and-build:
@@ -25,32 +31,67 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Determine if Should Build
+        id: should_build
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ inputs.force_build }}" == "true" ]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "Manual run with force_build enabled - will rebuild"
+          elif [ "${{ steps.check_rel.outputs.exists }}" == "false" ]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "Release doesn't exist - will build"
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+            echo "Release exists and not forced - skipping build"
+          fi
+
+      - name: Delete Existing Release Asset if Force Build
+        if: steps.should_build.outputs.build == 'true' && steps.check_rel.outputs.exists == 'true'
+        run: |
+          ASSET_ID=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.upstream.outputs.tag }} | jq -r '.assets[] | select(.name=="SpineViewerCLI-Linux-ARM64.zip") | .id')
+          if [ -n "$ASSET_ID" ] && [ "$ASSET_ID" != "null" ]; then
+            curl -X DELETE \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID
+            echo "Deleted existing asset"
+          fi
+          
       - name: Checkout Upstream Code
-        if: steps.check_rel.outputs.exists == 'false'
+        if: steps.should_build.outputs.build == 'true'
         uses: actions/checkout@v4
         with:
           repository: ww-rm/SpineViewer
           ref: ${{ steps.upstream.outputs.tag }}
           
       - name: Setup .NET
-        if: steps.check_rel.outputs.exists == 'false'
+        if: steps.should_build.outputs.build == 'true'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
       - name: Patch SkiaSharp for Linux ARM64
-        if: steps.check_rel.outputs.exists == 'false'
+        if: steps.should_build.outputs.build == 'true'
         run: |
           sed -i 's/Include="SkiaSharp"/Include="SkiaSharp.NativeAssets.Linux.NoDependencies"/g' SpineViewerCLI/SpineViewerCLI.csproj
 
       - name: Build and Publish for ARM64
-        if: steps.check_rel.outputs.exists == 'false'
+        if: steps.should_build.outputs.build == 'true'
         run: |
           dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true /p:PlatformTarget=AnyCpu -o dist/arm64
           cd dist/arm64 && zip -r ../../SpineViewerCLI-Linux-ARM64.zip *
 
-      - name: Create/Update Release
-        if: steps.check_rel.outputs.exists == 'false'
+      - name: Upload to Existing Release
+        if: steps.should_build.outputs.build == 'true' && steps.check_rel.outputs.exists == 'true'
+        run: |
+          RELEASE_ID=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.upstream.outputs.tag }} | jq -r .id)
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/zip" \
+            --data-binary @SpineViewerCLI-Linux-ARM64.zip \
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=SpineViewerCLI-Linux-ARM64.zip"
+
+      - name: Create New Release
+        if: steps.should_build.outputs.build == 'true' && steps.check_rel.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.upstream.outputs.tag }}
