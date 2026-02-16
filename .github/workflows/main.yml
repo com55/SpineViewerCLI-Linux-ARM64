@@ -31,22 +31,23 @@ jobs:
         with:
           repository: ww-rm/SpineViewer
           ref: ${{ steps.upstream.outputs.tag }}
-
+          
       - name: Setup .NET
         if: steps.check_rel.outputs.exists == 'false'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      - name: Build and Publish for ARM64
+      - name: Patch SkiaSharp for Linux ARM64
+        if: steps.check_rel.outputs.exists == 'false'
         run: |
-          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
-          -c Release \
-          -r linux-arm64 \
-          --self-contained true \
-          -p:PublishSingleFile=true \
-          -p:PublishTrimmed=false \
-          -o dist/arm64
+          sed -i 's/Include="SkiaSharp"/Include="SkiaSharp.NativeAssets.Linux.NoDependencies"/g' SpineViewerCLI/SpineViewerCLI.csproj
+
+      - name: Build and Publish for ARM64
+        if: steps.check_rel.outputs.exists == 'false'
+        run: |
+          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true /p:PlatformTarget=AnyCpu -o dist/arm64
+          cd dist/arm64 && zip -r ../../SpineViewerCLI-Linux-ARM64.zip *
 
       - name: Create/Update Release
         if: steps.check_rel.outputs.exists == 'false'
