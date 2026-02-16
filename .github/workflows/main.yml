@@ -91,6 +91,7 @@ jobs:
           # Install dependencies
           RUN apt-get update && apt-get install -y \
               uuid-dev \
+              libfreetype6 \
               patchelf \
               zip \
               && rm -rf /var/lib/apt/lists/*
@@ -108,18 +109,35 @@ jobs:
               /p:PlatformTarget=ARM64 \
               -o /output
           
-          # Copy libuuid
+          # Make binary executable
+          RUN chmod +x /output/SpineViewerCLI
+          
+          # Copy required libraries
           RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
               cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null
           
-          # Create symlinks
+          RUN cp /usr/lib/aarch64-linux-gnu/libfreetype.so.6* /output/ 2>/dev/null || \
+              cp /lib/aarch64-linux-gnu/libfreetype.so.6* /output/ 2>/dev/null
+          
+          # Copy FreeType dependencies
+          RUN cp /usr/lib/aarch64-linux-gnu/libpng16.so.16* /output/ 2>/dev/null || true
+          RUN cp /usr/lib/aarch64-linux-gnu/libbrotlidec.so.1* /output/ 2>/dev/null || true
+          RUN cp /usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1* /output/ 2>/dev/null || true
+          
+          # Create symlinks for all libraries
           RUN cd /output && \
-              for f in libuuid.so.1.*; do \
-                if [ -f "$f" ]; then \
-                  ln -sf "$f" libuuid.so.1 2>/dev/null || true; \
-                  ln -sf "$f" libuuid.so 2>/dev/null || true; \
-                  break; \
-                fi; \
+              for lib in libuuid libfreetype libpng16 libbrotlidec libbrotlicommon; do \
+                for f in ${lib}.so.*.*; do \
+                  if [ -f "$f" ]; then \
+                    base="${f%%.*}"; \
+                    ln -sf "$f" "${base}.so" 2>/dev/null || true; \
+                    for link in ${lib}.so.*; do \
+                      if [ ! -f "$link" ]; then \
+                        ln -sf "$f" "$link" 2>/dev/null || true; \
+                      fi; \
+                    done; \
+                  fi; \
+                done; \
               done
           
           # Create wrapper script with LD_PRELOAD
@@ -128,9 +146,16 @@ jobs:
           DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           export LD_LIBRARY_PATH="$DIR:$LD_LIBRARY_PATH"
           
-          # Use LD_PRELOAD to force load libuuid first
-          if [ -f "$DIR/libuuid.so.1" ]; then
-            export LD_PRELOAD="$DIR/libuuid.so.1"
+          # Preload required libraries in correct order
+          PRELOAD_LIBS=""
+          for lib in libbrotlicommon.so.1 libbrotlidec.so.1 libpng16.so.16 libuuid.so.1 libfreetype.so.6; do
+            if [ -f "$DIR/$lib" ]; then
+              PRELOAD_LIBS="$DIR/$lib:$PRELOAD_LIBS"
+            fi
+          done
+          
+          if [ -n "$PRELOAD_LIBS" ]; then
+            export LD_PRELOAD="$PRELOAD_LIBS"
           fi
           
           exec "$DIR/SpineViewerCLI" "$@"
@@ -145,16 +170,10 @@ jobs:
           
           RUN patchelf --set-rpath '$ORIGIN:$ORIGIN/lib' /output/SpineViewerCLI 2>/dev/null || true
           
-          # Create README
-          RUN cat > /output/README.txt << 'README'
-          SpineViewer CLI - Linux ARM64 Build
-          =====================================
-          
-          Usage:
-            ./SpineViewerCLI.sh [arguments]
-          
-          All dependencies are bundled.
-          README
+          # Verify libraries
+          RUN echo "=== Bundled libraries ===" && \
+              ls -lh /output/*.so* && \
+              echo "=== Verification complete ==="
           
           WORKDIR /output
           RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
