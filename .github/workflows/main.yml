@@ -62,23 +62,62 @@ jobs:
         with:
           repository: ww-rm/SpineViewer
           ref: ${{ steps.upstream.outputs.tag }}
-          
-      - name: Setup .NET
+
+      - name: Set up QEMU
         if: steps.should_build.outputs.build == 'true'
-        uses: actions/setup-dotnet@v4
+        uses: docker/setup-qemu-action@v3
         with:
-          dotnet-version: 8.0.x
+          platforms: arm64
 
-      - name: Patch SkiaSharp for Linux ARM64
+      - name: Build in Docker with Dependencies
         if: steps.should_build.outputs.build == 'true'
         run: |
-          sed -i 's/Include="SkiaSharp"/Include="SkiaSharp.NativeAssets.Linux.NoDependencies"/g' SpineViewerCLI/SpineViewerCLI.csproj
-
-      - name: Build and Publish for ARM64
-        if: steps.should_build.outputs.build == 'true'
-        run: |
-          dotnet publish SpineViewerCLI/SpineViewerCLI.csproj -c Release -r linux-arm64 --self-contained true /p:PublishSingleFile=true /p:PlatformTarget=AnyCpu -o dist/arm64
-          cd dist/arm64 && zip -r ../../SpineViewerCLI-Linux-ARM64.zip *
+          cat > Dockerfile.arm64 << 'EOF'
+          FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/sdk:8.0
+          
+          # Install dependencies
+          RUN apt-get update && apt-get install -y \
+              uuid-dev \
+              patchelf \
+              zip \
+              && rm -rf /var/lib/apt/lists/*
+          
+          WORKDIR /build
+          COPY . .
+          
+          # Don't patch - use regular SkiaSharp
+          RUN dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
+              -c Release \
+              -r linux-arm64 \
+              --self-contained true \
+              /p:PublishSingleFile=false \
+              /p:PublishTrimmed=false \
+              -o /output
+          
+          # Bundle libuuid with the app
+          RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
+              cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
+              echo "Warning: libuuid not found"
+          
+          # Patch RPATH for all .so files to look in current directory
+          RUN find /output -name "*.so" -type f -exec patchelf --set-rpath '$ORIGIN' {} \; 2>/dev/null || true
+          
+          # Patch the main executable to look in current directory for libraries
+          RUN patchelf --set-rpath '$ORIGIN' /output/SpineViewerCLI 2>/dev/null || true
+          
+          # Also set interpreter if needed
+          RUN patchelf --set-interpreter /output/ld-linux-aarch64.so.1 /output/SpineViewerCLI 2>/dev/null || true
+          
+          # Verify RPATH is set correctly
+          RUN patchelf --print-rpath /output/SpineViewerCLI || echo "No RPATH found"
+          RUN patchelf --print-rpath /output/libSkiaSharp.so || echo "No RPATH found for SkiaSharp"
+          
+          WORKDIR /output
+          RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
+          EOF
+          
+          docker buildx build --platform linux/arm64 -f Dockerfile.arm64 -t spineviewer-arm64 --load .
+          docker run --rm -v $(pwd):/out spineviewer-arm64 cp /SpineViewerCLI-Linux-ARM64.zip /out/
 
       - name: Upload to Existing Release
         if: steps.should_build.outputs.build == 'true' && steps.check_rel.outputs.exists == 'true'
@@ -96,7 +135,13 @@ jobs:
         with:
           tag_name: ${{ steps.upstream.outputs.tag }}
           name: Release ${{ steps.upstream.outputs.tag }}
-          body: "Weekly Auto-built ARM64 binary"
+          body: |
+            Release ${{ steps.upstream.outputs.tag }}
+            **Usage:**
+            ```bash
+                        unzip SpineViewerCLI-Linux-ARM64.zip
+                        ./SpineViewerCLI [arguments]
+            ```
           files: SpineViewerCLI-Linux-ARM64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
