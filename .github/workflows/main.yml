@@ -109,9 +109,6 @@ jobs:
               /p:PlatformTarget=ARM64 \
               -o /output
           
-          # Make binary executable
-          RUN chmod +x /output/SpineViewerCLI
-          
           # Copy required libraries
           RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
               cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null
@@ -161,6 +158,8 @@ jobs:
           exec "$DIR/SpineViewerCLI" "$@"
           WRAPPER
           
+          # Make binary executable
+          RUN chmod +x /output/SpineViewerCLI
           RUN chmod +x /output/SpineViewerCLI.sh
           
           # Patch RPATH
@@ -176,7 +175,7 @@ jobs:
               echo "=== Verification complete ==="
           
           WORKDIR /output
-          RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
+          RUN zip -r -X /SpineViewerCLI-Linux-ARM64.zip .
           EOF
           
           docker buildx build \
