@@ -92,25 +92,34 @@ jobs:
               --self-contained true \
               /p:PublishSingleFile=false \
               /p:PublishTrimmed=false \
+              /p:PlatformTarget=ARM64 \
               -o /output
           
           # Bundle libuuid with the app
           RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
               cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ || \
+              find /usr/lib -name "libuuid.so.1*" -exec cp {} /output/ \; || \
+              find /lib -name "libuuid.so.1*" -exec cp {} /output/ \; || \
               echo "Warning: libuuid not found"
           
+          # Create symlink if needed
+          RUN cd /output && \
+              if [ -f libuuid.so.1.* ] && [ ! -f libuuid.so.1 ]; then \
+                ln -s libuuid.so.1.* libuuid.so.1; \
+              fi
+          
           # Patch RPATH for all .so files to look in current directory
-          RUN find /output -name "*.so" -type f -exec patchelf --set-rpath '$ORIGIN' {} \; 2>/dev/null || true
+          RUN find /output -name "*.so*" -type f -exec patchelf --set-rpath '$ORIGIN' {} \; 2>/dev/null || true
           
           # Patch the main executable to look in current directory for libraries
           RUN patchelf --set-rpath '$ORIGIN' /output/SpineViewerCLI 2>/dev/null || true
           
-          # Also set interpreter if needed
-          RUN patchelf --set-interpreter /output/ld-linux-aarch64.so.1 /output/SpineViewerCLI 2>/dev/null || true
-          
           # Verify RPATH is set correctly
-          RUN patchelf --print-rpath /output/SpineViewerCLI || echo "No RPATH found"
-          RUN patchelf --print-rpath /output/libSkiaSharp.so || echo "No RPATH found for SkiaSharp"
+          RUN echo "=== Checking RPATH ===" && \
+              patchelf --print-rpath /output/SpineViewerCLI || echo "No RPATH for SpineViewerCLI" && \
+              (patchelf --print-rpath /output/libSkiaSharp.so || echo "No RPATH for SkiaSharp") && \
+              echo "=== Checking libuuid ===" && \
+              ls -la /output/libuuid* || echo "No libuuid found"
           
           WORKDIR /output
           RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
