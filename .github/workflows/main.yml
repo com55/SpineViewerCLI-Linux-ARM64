@@ -98,7 +98,7 @@ jobs:
           WORKDIR /build
           COPY . .
           
-          # Build without patching SkiaSharp reference
+          # Build
           RUN dotnet publish SpineViewerCLI/SpineViewerCLI.csproj \
               -c Release \
               -r linux-arm64 \
@@ -108,13 +108,11 @@ jobs:
               /p:PlatformTarget=ARM64 \
               -o /output
           
-          # Copy libuuid to multiple locations for maximum compatibility
+          # Copy libuuid
           RUN cp /usr/lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
-              cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null || \
-              find /usr/lib -name "libuuid.so.1*" -exec cp {} /output/ \; 2>/dev/null || \
-              find /lib -name "libuuid.so.1*" -exec cp {} /output/ \; 2>/dev/null
+              cp /lib/aarch64-linux-gnu/libuuid.so.1* /output/ 2>/dev/null
           
-          # Create symlinks for libuuid
+          # Create symlinks
           RUN cd /output && \
               for f in libuuid.so.1.*; do \
                 if [ -f "$f" ]; then \
@@ -124,32 +122,39 @@ jobs:
                 fi; \
               done
           
-          # AGGRESSIVE RPATH PATCHING - patch every single .so file
-          RUN echo "=== Patching all libraries ===" && \
-              find /output -type f \( -name "*.so" -o -name "*.so.*" \) -exec sh -c '\
-                echo "Processing: {}"; \
-                patchelf --set-rpath "\$ORIGIN:\$ORIGIN/lib" "{}" 2>/dev/null || true; \
-                patchelf --print-rpath "{}" 2>/dev/null || echo "  No RPATH set"; \
-              ' \;
+          # Create wrapper script with LD_PRELOAD
+          RUN cat > /output/SpineViewerCLI.sh << 'WRAPPER'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="$DIR:$LD_LIBRARY_PATH"
           
-          # Patch the main executable with multiple fallback paths
-          RUN echo "=== Patching main executable ===" && \
-              patchelf --set-rpath '$ORIGIN:$ORIGIN/lib:/lib:/usr/lib' /output/SpineViewerCLI 2>/dev/null || true && \
-              patchelf --print-rpath /output/SpineViewerCLI 2>/dev/null || echo "No RPATH for executable"
+          # Use LD_PRELOAD to force load libuuid first
+          if [ -f "$DIR/libuuid.so.1" ]; then
+            export LD_PRELOAD="$DIR/libuuid.so.1"
+          fi
           
-          # VERIFICATION - check everything is correct
-          RUN echo "=== VERIFICATION START ===" && \
-              echo "--- Files in output ---" && \
-              ls -lh /output/ | head -20 && \
-              echo "--- libuuid files ---" && \
-              ls -la /output/libuuid* && \
-              echo "--- libSkiaSharp.so RPATH ---" && \
-              (patchelf --print-rpath /output/libSkiaSharp.so || echo "NO RPATH") && \
-              echo "--- libSkiaSharp.so dependencies ---" && \
-              (ldd /output/libSkiaSharp.so 2>/dev/null | grep -E "uuid|not found" || echo "ldd not available") && \
-              echo "--- SpineViewerCLI RPATH ---" && \
-              (patchelf --print-rpath /output/SpineViewerCLI || echo "NO RPATH") && \
-              echo "=== VERIFICATION END ==="
+          exec "$DIR/SpineViewerCLI" "$@"
+          WRAPPER
+          
+          RUN chmod +x /output/SpineViewerCLI.sh
+          
+          # Patch RPATH
+          RUN find /output -type f \( -name "*.so" -o -name "*.so.*" \) -exec sh -c '\
+            patchelf --set-rpath "\$ORIGIN:\$ORIGIN/lib" "{}" 2>/dev/null || true; \
+          ' \;
+          
+          RUN patchelf --set-rpath '$ORIGIN:$ORIGIN/lib' /output/SpineViewerCLI 2>/dev/null || true
+          
+          # Create README
+          RUN cat > /output/README.txt << 'README'
+          SpineViewer CLI - Linux ARM64 Build
+          =====================================
+          
+          Usage:
+            ./SpineViewerCLI.sh [arguments]
+          
+          All dependencies are bundled.
+          README
           
           WORKDIR /output
           RUN zip -r /SpineViewerCLI-Linux-ARM64.zip .
@@ -188,10 +193,11 @@ jobs:
           name: Release ${{ steps.upstream.outputs.tag }}
           body: |
             Release ${{ steps.upstream.outputs.tag }}
+            
             **Usage:**
             ```bash
               unzip SpineViewerCLI-Linux-ARM64.zip
-              ./SpineViewerCLI [arguments]
+              ./SpineViewerCLI.sh [arguments]
             ```
           files: SpineViewerCLI-Linux-ARM64.zip
         env:
